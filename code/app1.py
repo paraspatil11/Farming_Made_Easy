@@ -746,6 +746,75 @@ def TwelveMonthPrevious(name):
             crop_price.append([date_str, price])
         return crop_price
 
+
+@app.route('/fertilizer_info', methods=['POST', 'GET'])
+def fertilizer_info():
+    try:
+        # Fetch fertilizer data from Appwrite
+        file_bytes = storage.get_file_download(
+            bucket_id=app.config['APPWRITE_BUCKET_ID'],
+            file_id='6802208f001f4c7b6403'  # Replace with your actual file ID
+        )
+        data = pd.read_csv(io.BytesIO(file_bytes))
+        
+        # Validate data structure
+        if 'Crop' not in data.columns or 'query' not in data.columns or 'KCCAns' not in data.columns:
+            return render_template('error.html', message="Invalid fertilizer data format"), 500
+        
+        crops = data['Crop'].unique()
+
+        if request.method == 'GET':
+            crop_se = request.args.get('manager')
+            if crop_se:
+                query = data[data['Crop'] == crop_se]
+                query = query['query'].unique()
+                queryArr = [{'name': q} for q in query]
+                return jsonify({
+                    'data': render_template('fertilizer.html', crops=crops, crop_len=len(crops)),
+                    'query': queryArr
+                })
+
+        if request.method == 'POST':
+            crop_name = request.form.get('crop')
+            query_type = request.form.get('query')
+            if crop_name and query_type:
+                query = data[data['Crop'] == crop_name]
+                answer = query[query['query'] == query_type]
+                protection = answer['KCCAns'].unique().tolist()
+                
+                return render_template(
+                    'fertilizer.html',
+                    protection=protection,
+                    protection_len=len(protection),
+                    display=True,
+                    crops=crops,
+                    crop_len=len(crops)
+                )
+        
+        return render_template(
+            'fertilizer.html',
+            crops=crops,
+            crop_len=len(crops),
+            query_len=0
+        )
+
+    except AppwriteException as e:
+        print(f"Appwrite Error: {e}")
+        return render_template('error.html', message="Failed to fetch fertilizer data"), 500
+    except Exception as e:
+        print(f"Error in fertilizer_info: {e}")
+        return render_template('error.html', message="Server error"), 500
+
+@app.route('/shop',methods=['POST','GET'])
+def shop():
+    if request.method == 'POST':
+        city = request.form['city']
+        print(city)
+
+        return render_template('fertilizer_shop.html',city=city,data=True)
+
+    return render_template('fertilizer_shop.html')
+
 @app.route('/signup', methods=['GET', 'POST'])
 def signup():
     if request.method == 'POST':
@@ -789,9 +858,6 @@ def load_csv_from_appwrite(file_id):
     except Exception as e:
         print(f"Error loading CSV: {e}")
         return None
-
-# Initialize the Appwrite client and load commodities when the app starts
-# client = initialize_appwrite_client()
 
 # Load all commodities at startup
 try:

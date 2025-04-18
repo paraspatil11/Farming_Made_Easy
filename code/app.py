@@ -12,6 +12,7 @@ import random
 #from market_stat import Market
 import croprecomend
 import io
+import requests
 
 
 from dotenv import load_dotenv
@@ -114,110 +115,76 @@ base = {
 }
 commodity_list = []
 
-
-# class Commodity:
-#     def __init__(self, csv_name):
-#         self.name = csv_name
-#         dataset = pd.read_csv(csv_name)
-#         self.X = dataset.iloc[:, :-1].values #extracting rows using pandas
-#         self.Y = dataset.iloc[:, 3].values
-#         # Fitting decision tree regression to dataset
-#         from sklearn.tree import DecisionTreeRegressor
-#         depth = random.randrange(7,18) #returns a random depth of the tree from the specified range
-#         self.regressor = DecisionTreeRegressor(max_depth=depth)
-#         self.regressor.fit(self.X, self.Y) #fit() method takes the training data as arguments
-
-#     def getPredictedValue(self, value):
-#         if value[1]>=2019:
-#             fsa = np.array(value).reshape(1, 3)
-#             #Convert the following 1-D array into a 2-D array.
-#             #The outermost dimension will have 1 array, each with 3 elements.
-#             return self.regressor.predict(fsa)[0]
-#         else:
-#             c=self.X[:,0:2]
-#             x=[]
-#             for i in c:
-#                 x.append(i.tolist())
-#             fsa = [value[0], value[1]]
-#             ind = 0
-#             for i in range(0,len(x)):
-#                 if x[i]==fsa:
-#                     ind=i
-#                     break
-#             return self.Y[i]
-
-#     def getCropName(self):
-#         a = self.name.split('.')
-#         return a[0]
-
-# class Commodity:
-#     def __init__(self, file_id):
-#         self.name = file_id
+# Instead of using storage.get_file_download, try:
+def load_csv_from_appwrite(file_id):
+    try:
+        bucket_id = app.config['APPWRITE_BUCKET_ID']
+        print(f"Attempting to download file {file_id} from bucket {bucket_id}")
         
-#         # Fetch the file from Appwrite storage
-#         file = storage.get_file(bucket_id=app.config['APPWRITE_BUCKET_ID'], file_id=file_id)
+        # Get the file view URL
+        file_view_url = f"{app.config['APPWRITE_ENDPOINT']}/storage/buckets/{bucket_id}/files/{file_id}/view"
         
-#         # Convert the file's binary data into a pandas dataframe
-#         file_data = file['data']  # Binary content of the file
-#         dataset = pd.read_csv(io.BytesIO(file_data))  # Read CSV from the binary data
+        # Make a request to download the file
+        response = requests.get(
+            file_view_url,
+            headers={
+                "X-Appwrite-Project": app.config['APPWRITE_PROJECT_ID'],
+                # If you have a session token, add it here
+                # "X-Appwrite-Session": session_token
+            }
+        )
         
-#         self.X = dataset.iloc[:, :-1].values
-#         self.Y = dataset.iloc[:, 3].values
-        
-#         # Train the decision tree model
-#         from sklearn.tree import DecisionTreeRegressor
-#         depth = random.randrange(7,18)
-#         self.regressor = DecisionTreeRegressor(max_depth=depth)
-#         self.regressor.fit(self.X, self.Y)
-
-#     def getPredictedValue(self, value):
-#         if value[1] >= 2019:
-#             fsa = np.array(value).reshape(1, 3)
-#             return self.regressor.predict(fsa)[0]
-#         else:
-#             c = self.X[:, 0:2]
-#             x = [i.tolist() for i in c]
-#             fsa = [value[0], value[1]]
-#             ind = 0
-#             for i in range(len(x)):
-#                 if x[i] == fsa:
-#                     ind = i
-#                     break
-#             return self.Y[ind]
-
-#     def getCropName(self):
-#         a = self.name.split('.')
-#         return a[0]
+        if response.status_code == 200:
+            print(f"Successfully downloaded file {file_id}, size: {len(response.content)} bytes")
+            csv_content = io.BytesIO(response.content)
+            df = pd.read_csv(csv_content)
+            print(f"Successfully loaded CSV into DataFrame, shape: {df.shape}")
+            return df
+        else:
+            print(f"Error downloading file: Status code {response.status_code}")
+            print(response.text)
+            return None
+            
+    except Exception as e:
+        print(f"Error loading CSV: {e}")
+        print("File ID:", file_id)
+        print("Bucket ID:", app.config['APPWRITE_BUCKET_ID'])
+        return None
 
 class Commodity:
-    def __init__(self, file_id, client):
-        # Reuse the existing client passed as an argument
-        self.storage = Storage(client)
+    def __init__(self, file_id, commodity_name, client):
+        self.name = commodity_name
+        self.file_id = file_id
+        self.client = client
+        
+        # Fetch the dataset using the reusable function
+        dataset = load_csv_from_appwrite(file_id)
+        if dataset is None:
+            raise ValueError(f"Failed to load dataset for file_id: {file_id}")
 
-        self.name = file_id
-        dataset = self.get_csv_from_appwrite(file_id)
-
-        self.X = dataset.iloc[:, :-1].values
-        self.Y = dataset.iloc[:, 3].values
-
-        # Fitting decision tree regression to the dataset
-        from sklearn.tree import DecisionTreeRegressor
-        depth = random.randrange(7,18)  # Returns a random depth of the tree from the specified range
-        self.regressor = DecisionTreeRegressor(max_depth=depth)
-        self.regressor.fit(self.X, self.Y)  # fit() method takes the training data as arguments
-
-    def get_csv_from_appwrite(self, file_id):
         try:
-            # Fetch the file from Appwrite Storage
-            file = self.storage.get_file(file_id=file_id, bucket_id=app.config['APPWRITE_BUCKET_ID'])
-            file_data = file['data']  # This is the binary content of the file
+            # Handle different dataset formats
+            if commodity_name == "copra":
+                # For copra, we need special handling as it has a different structure
+                # You'll need to determine the correct columns to use for X and Y
+                numeric_columns = dataset.select_dtypes(include=['number']).columns
+                self.X = dataset[numeric_columns].iloc[:, :-1].values
+                self.Y = dataset[numeric_columns].iloc[:, -1].values
+            else:
+                # Standard format for other commodities
+                self.X = dataset.iloc[:, :-1].values
+                self.Y = dataset.iloc[:, 3].values
 
-            # Convert the binary data into a pandas dataframe
-            dataset = pd.read_csv(io.BytesIO(file_data))  # Read CSV from the binary data
-            return dataset
+            # Train the decision tree model
+            from sklearn.tree import DecisionTreeRegressor
+            depth = random.randrange(7, 18)
+            self.regressor = DecisionTreeRegressor(max_depth=depth)
+            self.regressor.fit(self.X, self.Y)
+            print(f"Successfully initialized {commodity_name} model")
+            
         except Exception as e:
-            print(f"Error fetching file from Appwrite: {e}")
-            return None
+            print(f"Error processing {commodity_name} dataset: {e}")
+            raise
 
     def getPredictedValue(self, value):
         if value[1] >= 2019:
@@ -235,11 +202,71 @@ class Commodity:
             return self.Y[ind]
 
     def getCropName(self):
-        a = self.name.split('.')
-        return a[0]
+        # Format it as "crops/name" to match what the functions expect
+        return f"crops/{self.name}"
+ 
 
+@app.route('/test_connection')
+def test_connection():
+    try:
+        # Try to list files in the bucket
+        files = storage.list_files(bucket_id=app.config['APPWRITE_BUCKET_ID'])
+        return jsonify({
+            "success": True,
+            "message": f"Connected to Appwrite successfully. Found {len(files['files'])} files in bucket.",
+            "bucket_id": app.config['APPWRITE_BUCKET_ID']
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "bucket_id": app.config['APPWRITE_BUCKET_ID']
+        })
+    
+@app.route('/test_files')
+def test_files():
+    try:
+        result = {}
+        # Check the bucket
+        bucket_id = app.config['APPWRITE_BUCKET_ID']
+        result['bucket_id'] = bucket_id
+        
+        # Try to list files
+        files_response = storage.list_files(bucket_id=bucket_id)
+        result['files_count'] = len(files_response['files'])
+        result['total_files'] = files_response['total']
+        
+        # Test a specific file
+        arhar_id = commodity_dict['arhar']
+        try:
+            file_info = storage.get_file(bucket_id=bucket_id, file_id=arhar_id)
+            result['arhar_file_exists'] = True
+            result['arhar_file_info'] = {
+                'name': file_info['name'],
+                'size': file_info['size'],
+                'type': file_info['mimeType']
+            }
+        except Exception as e:
+            result['arhar_file_exists'] = False
+            result['arhar_error'] = str(e)
+        
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        })
 
-
+@app.route('/test_download/<file_id>')
+def test_download(file_id):
+    try:
+        file_bytes = storage.get_file_download(
+            bucket_id=app.config['APPWRITE_BUCKET_ID'], 
+            file_id=file_id
+        )
+        return f"File downloaded successfully: {len(file_bytes)} bytes"
+    except Exception as e:
+        return f"Error downloading file: {e}"
 
 @app.route('/')
 def index():
@@ -460,7 +487,7 @@ def ticker(item, number):
         context = context + '%'
     return context
 
-
+#  Need to change since getPredicted function in Commodity used 
 def TopThreeWinners():
     current_month = datetime.now().month
     current_year = datetime.now().year
@@ -488,7 +515,36 @@ def TopThreeWinners():
     #print(to_send)
     return to_send
 
+def TopThreeWinners():
+    current_month = datetime.now().month
+    current_year = datetime.now().year
+    current_rainfall = annual_rainfall[current_month - 1]
+    prev_month = current_month - 1
+    prev_rainfall = annual_rainfall[prev_month - 1]
+    current_month_prediction = []
+    prev_month_prediction = []
+    change = []
 
+    for i in commodity_list:
+        current_predict = i.getPredictedValue([float(current_month), current_year, current_rainfall])
+        current_month_prediction.append(current_predict)
+        prev_predict = i.getPredictedValue([float(prev_month), current_year, prev_rainfall])
+        prev_month_prediction.append(prev_predict)
+        change.append((((current_predict - prev_predict) * 100 / prev_predict), commodity_list.index(i)))
+    sorted_change = change
+    sorted_change.sort(reverse=True)
+    
+    to_send = []
+    for j in range(0, min(3, len(sorted_change))):
+        perc, i = sorted_change[j]
+        name = commodity_list[i].getCropName()  # Remove the split
+        # Convert first letter to uppercase for base dict lookup
+        base_name = name.capitalize()
+        to_send.append([name, round((current_month_prediction[i] * base[base_name]) / 100, 2), round(perc, 2)])
+    
+    return to_send
+
+#  Need to change since getPredicted function in Commodity used 
 def TopThreeLosers():
     current_month = datetime.now().month
     current_year = datetime.now().year
@@ -514,8 +570,17 @@ def TopThreeLosers():
         to_send.append([name, round((current_month_prediction[i] * base[name]) / 100, 2), round(perc, 2)])
    # print(to_send)
     return to_send
+    # to_send = []
+    # for j in range(0, min(3, len(sorted_change))):  # Added min to prevent out of range errors
+    #     perc, i = sorted_change[j]
+    #     name = commodity_list[i].getCropName()  # Remove the split
+    #     # Convert first letter to uppercase for base dict lookup
+    #     base_name = name.capitalize()
+    #     to_send.append([name, round((current_month_prediction[i] * base[base_name]) / 100, 2), round(perc, 2)])
+   
+    # return to_send
 
-
+#  Need to change since getCropName function in Commodity used 
 def SixMonthsForecast():
     month1=[]
     month2=[]
@@ -524,12 +589,13 @@ def SixMonthsForecast():
     month5=[]
     month6=[]
     for i in commodity_list:
-        crop=SixMonthsForecastHelper(i.getCropName())
-        k=0
+        crop = SixMonthsForecastHelper(i.getCropName())
+        k = 0
         for j in crop:
             time = j[0]
             price = j[1]
             change = j[2]
+            crop_name = i.getCropName()  # No split needed
             if k==0:
                 month1.append((price,change,i.getCropName().split("/")[1],time))
             elif k==1:
@@ -560,6 +626,7 @@ def SixMonthsForecast():
    # print(crop_month_wise)
     return crop_month_wise
 
+#  Need to change since getPredicted function in Commodity used 
 def SixMonthsForecastHelper(name):
     current_month = datetime.now().month
     current_year = datetime.now().year
@@ -596,6 +663,7 @@ def SixMonthsForecastHelper(name):
    # print("Crop_Price: ", crop_price)
     return crop_price
 
+#  Need to change since getPredicted function in Commodity used 
 def CurrentMonth(name):
     current_month = datetime.now().month
     current_year = datetime.now().year
@@ -610,6 +678,7 @@ def CurrentMonth(name):
     current_price = (base[name.capitalize()]*current_wpi)/100
     return current_price
 
+#  Need to change since getPredicted function in Commodity used 
 def TwelveMonthsForecast(name):
     current_month = datetime.now().month
     current_year = datetime.now().year
@@ -665,7 +734,7 @@ def TwelveMonthsForecast(name):
 
     return max_crop, min_crop, crop_price
 
-
+#  Need to change since getPredicted function in Commodity used 
 def TwelveMonthPrevious(name):
     name = name.lower()
     current_month = datetime.now().month
@@ -794,93 +863,32 @@ def logout():
     session.clear()
     return redirect('/login')
 
-def load_csv_from_appwrite(file_id):
-    try:
-        file_bytes = storage.get_file_download(app.config['APPWRITE_BUCKET_ID'], file_id)
-        csv_content = io.BytesIO(file_bytes)
-        df = pd.read_csv(csv_content)
-        return df
-    except Exception as e:
-        print(f"Error loading CSV: {e}")
-        return None
-
-
-
-# if __name__ == "__main__":
-#     arhar = Commodity(commodity_dict["arhar"])
-#     commodity_list.append(arhar)
-#     bajra = Commodity(commodity_dict["bajra"])
-#     commodity_list.append(bajra)
-#     barley = Commodity(commodity_dict["barley"])
-#     commodity_list.append(barley)
-#     copra = Commodity(commodity_dict["copra"])
-#     commodity_list.append(copra)
-#     cotton = Commodity(commodity_dict["cotton"])
-#     commodity_list.append(cotton)
-#     sesamum = Commodity(commodity_dict["sesamum"])
-#     commodity_list.append(sesamum)
-#     gram = Commodity(commodity_dict["gram"])
-#     commodity_list.append(gram)
-#     groundnut = Commodity(commodity_dict["groundnut"])
-#     commodity_list.append(groundnut)
-#     jowar = Commodity(commodity_dict["jowar"])
-#     commodity_list.append(jowar)
-#     maize = Commodity(commodity_dict["maize"])
-#     commodity_list.append(maize)
-#     masoor = Commodity(commodity_dict["masoor"])
-#     commodity_list.append(masoor)
-#     moong = Commodity(commodity_dict["moong"])
-#     commodity_list.append(moong)
-#     niger = Commodity(commodity_dict["niger"])
-#     commodity_list.append(niger)
-#     paddy = Commodity(commodity_dict["paddy"])
-#     commodity_list.append(paddy)
-#     ragi = Commodity(commodity_dict["ragi"])
-#     commodity_list.append(ragi)
-#     rape = Commodity(commodity_dict["rape"])
-#     commodity_list.append(rape)
-#     jute = Commodity(commodity_dict["jute"])
-#     commodity_list.append(jute)
-#     safflower = Commodity(commodity_dict["safflower"])
-#     commodity_list.append(safflower)
-#     soyabean = Commodity(commodity_dict["soyabean"])
-#     commodity_list.append(soyabean)
-#     sugarcane = Commodity(commodity_dict["sugarcane"])
-#     commodity_list.append(sugarcane)
-#     sunflower = Commodity(commodity_dict["sunflower"])
-#     commodity_list.append(sunflower)
-#     urad = Commodity(commodity_dict["urad"])
-#     commodity_list.append(urad)
-#     wheat = Commodity(commodity_dict["wheat"])
-#     commodity_list.append(wheat)
-
-#     socketio.run(app)
-
-# if __name__ == "__main__":
-#     # Initialize the commodity list
-#     commodity_list = []
-
-#     # Replace the CSV file paths with Appwrite file IDs
-#     for commodity_name, file_id in commodity_dict.items():
-#         # Fetch the data from Appwrite storage using file ID
-#         df = Commodity.get_csv_from_appwrite(file_id)  # Assuming this function is implemented to fetch data from Appwrite
-        
-#         # Create a Commodity object using the data fetched from Appwrite (a dataframe in this case)
-#         commodity = Commodity(file_id, client)  # Passing file_id and client to the Commodity constructor
-#         commodity_list.append(commodity)
-
-#     # Run your application
-#     socketio.run(app)
 
 if __name__ == "__main__":
     commodity_list = []
 
     for commodity_name, file_id in commodity_dict.items():
         try:
-            commodity = Commodity(file_id, client)
+            # Skip copra for now if it's causing problems
+            if commodity_name == "copra":
+                print(f"Skipping {commodity_name} initialization due to data format issues")
+                continue
+                
+            # Initialize the Commodity object with file_id, name, and Appwrite client
+            commodity = Commodity(file_id, commodity_name, client)
             commodity_list.append(commodity)
+            print(f"Successfully added {commodity_name} to commodity_list")
         except Exception as e:
             print(f"Error initializing commodity {commodity_name}: {e}")
 
-    socketio.run(app)
+    # Print summary before starting server
+    print(f"Successfully initialized {len(commodity_list)} commodities")
+    
+    try:
+        # Start the Flask application with specific host and port
+        print("Starting Flask server...")
+        socketio.run(app, host='0.0.0.0', port=5000, debug=True)
+    except Exception as e:
+        print(f"Error starting Flask server: {e}")
+
 

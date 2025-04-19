@@ -7,3 +7,5 @@ pandas
 requests
 matplotlib
 python-dotenv
+appwrite
+pickle-mixin

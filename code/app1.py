@@ -877,5 +877,7 @@ def page_not_found(e):
 def internal_server_error(e):
     return render_template('500.html'), 500
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+if __name__ == "__main__":
+    # For local development
+    if not os.environ.get('VERCEL_ENV') == 'production':
+        app.run(debug=True, host='0.0.0.0', port=5000)
